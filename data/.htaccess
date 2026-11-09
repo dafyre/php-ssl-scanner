@@ -1,0 +1,2 @@
+# Defense in depth: this folder should never be inside the web root, but deny access if it is.
+Require all denied
