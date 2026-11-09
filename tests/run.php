@@ -6,6 +6,8 @@ declare(strict_types=1);
 
 require dirname(__DIR__) . '/src/bootstrap.php';
 
+use SslScanner\Scanner;
+use SslScanner\ScanStore;
 use SslScanner\TargetParser;
 
 $failures = 0;
@@ -64,6 +66,46 @@ check('invalid token warned', count($r['errors']) === 1 && str_contains($r['erro
 check('duplicates removed', count($p->parseTargets('10.0.0.1 10.0.0.1 10.0.0.0/30')['targets']) === 2);
 check('empty input rejected', throws(fn () => $p->parseTargets('   ')));
 check('host limit enforced', throws(fn () => (new TargetParser(10, 64, $fakeDns))->parseTargets('10.0.0.0/28')));
+
+echo "Scanner\n";
+
+$now = 1_800_000_000;
+check('daysLeft counts whole days remaining', Scanner::daysLeft($now + 86400 * 19 + 3600, $now) === 19);
+check('daysLeft is 0 on the last day', Scanner::daysLeft($now + 60, $now) === 0);
+check('daysLeft is -1 just after expiry', Scanner::daysLeft($now - 60, $now) === -1);
+check('daysLeft counts days since expiry', Scanner::daysLeft($now - 86400 * 3 - 60, $now) === -3);
+
+$targets = [['label' => '127.0.0.1', 'ip' => '127.0.0.1', 'sni' => null, 'error' => null]];
+$calls = [];
+$scanner = new Scanner(1.0, 4);
+$res = $scanner->scan($targets, [1, 2, 3], function ($done, $total, $found) use (&$calls) {
+    $calls[] = [$done, $total, $found];
+    return false;
+});
+check('progress callback can cancel', $scanner->wasCancelled() && $res === [] && $calls === [[0, 3, 0]]);
+
+$calls = [];
+$res = $scanner->scan([['label' => 'x.invalid', 'ip' => null, 'sni' => 'x.invalid', 'error' => 'DNS lookup failed']], [443, 8443], function ($d, $t, $f) use (&$calls) {
+    $calls[] = [$d, $t, $f];
+});
+check('final progress report is complete', !$scanner->wasCancelled() && end($calls) === [2, 2, 0] && count($res) === 2);
+
+echo "ScanStore\n";
+$dir = sys_get_temp_dir() . '/sslscanner-test-' . bin2hex(random_bytes(4));
+$store = new ScanStore($dir);
+$id = str_repeat('ab', 16);
+$store->writeProgress('alice', $id, ['status' => 'scanning', 'done' => 5]);
+check('progress round-trips', ($store->readProgress('alice', $id)['done'] ?? null) === 5);
+check('progress is per user', $store->readProgress('bob', $id) === null);
+$store->requestCancel('alice', $id);
+check('cancel flag set', $store->cancelRequested('alice', $id) && !$store->cancelRequested('bob', $id));
+$store->clearProgress('alice', $id);
+check('progress cleared', $store->readProgress('alice', $id) === null && !$store->cancelRequested('alice', $id));
+check('rejects path-like ids', throws(fn () => $store->readProgress('alice', '../../etc/passwd')));
+$store->saveResult('alice', ['results' => [1, 2]]);
+check('results saved per user', $store->loadResult('alice') === ['results' => [1, 2]] && $store->loadResult('bob') === null);
+array_map('unlink', glob($dir . '/*'));
+rmdir($dir);
 
 echo $failures === 0 ? "\nAll tests passed.\n" : "\n{$failures} test(s) failed.\n";
 exit($failures === 0 ? 0 : 1);

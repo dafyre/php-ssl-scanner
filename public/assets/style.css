@@ -102,7 +102,22 @@ button.link { background: none; color: var(--accent); padding: 0; font-weight: 5
 /* Scan form */
 .scan-form .fields { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 14px; }
 @media (max-width: 720px) { .scan-form .fields { grid-template-columns: 1fr; } }
-.progress { margin-left: 12px; color: var(--muted); }
+.button.small, button.small { padding: 4px 12px; font-size: 0.9rem; }
+button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+textarea:read-only, input:read-only { opacity: 0.7; }
+
+/* Scan progress */
+.scan-status { margin-top: 16px; }
+.status-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; font-weight: 600; }
+.status-detail { margin-top: 6px; color: var(--muted); font-size: 0.92rem; min-height: 1.4em; font-variant-numeric: tabular-nums; }
+.bar { height: 10px; border-radius: 999px; background: var(--bg); border: 1px solid var(--border); overflow: hidden; position: relative; }
+.bar .fill { height: 100%; width: 0; background: var(--accent); border-radius: 999px; transition: width 0.4s ease; }
+.bar.indeterminate .fill { width: 30%; position: absolute; animation: slide 1.2s ease-in-out infinite; }
+@keyframes slide { from { left: -30%; } to { left: 100%; } }
+@media (prefers-reduced-motion: reduce) {
+  .bar .fill { transition: none; }
+  .bar.indeterminate .fill { animation: none; width: 100%; opacity: 0.35; }
+}
 
 .error, .warning, .notice, .empty {
   border-radius: 6px;

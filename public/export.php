@@ -4,9 +4,10 @@ declare(strict_types=1);
 
 require dirname(__DIR__) . '/src/bootstrap.php';
 
-require_login();
+$user = require_login();
+session_write_close();
 
-$scan = $_SESSION['last_scan'] ?? null;
+$scan = scans()->loadResult($user);
 if ($scan === null) {
     header('Location: index.php');
     exit;
@@ -30,6 +31,9 @@ $out = fopen('php://output', 'w');
 fputcsv($out, ['host', 'ip', 'port', 'status', 'common_name', 'san', 'issuer', 'self_signed', 'issued_utc', 'expires_utc', 'days_left', 'serial', 'sha256_fingerprint', 'error']);
 
 foreach ($scan['results'] as $r) {
+    if ($r['ok']) {
+        $r['days_left'] = SslScanner\Scanner::daysLeft((int) $r['expires']);
+    }
     fputcsv($out, array_map('csv_safe', [
         $r['host'],
         $r['ip'] ?? '',

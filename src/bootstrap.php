@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use SslScanner\ScanStore;
 use SslScanner\UserStore;
 
 define('APP_ROOT', dirname(__DIR__));
@@ -46,13 +47,30 @@ function users(): UserStore
     return $store ??= new UserStore(config('data_dir') . '/users.json');
 }
 
+function scans(): ScanStore
+{
+    static $store = null;
+    return $store ??= new ScanStore(config('data_dir') . '/scans');
+}
+
+/** True when the request came from the page's JavaScript rather than a plain form post. */
+function is_ajax(): bool
+{
+    return ($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '') === 'fetch';
+}
+
 /** Escape for HTML output. */
 function h(mixed $value): string
 {
     return htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
-function start_session(): void
+/**
+ * @param bool $readOnly Read the session and release it immediately, without writing it
+ *                       back. Used by the progress poller so it can never overwrite
+ *                       changes made by the long-running scan request.
+ */
+function start_session(bool $readOnly = false): void
 {
     if (session_status() === PHP_SESSION_ACTIVE) {
         return;
@@ -68,12 +86,12 @@ function start_session(): void
         'httponly' => true,
         'samesite' => 'Strict',
     ]);
-    session_start();
+    session_start($readOnly ? ['read_and_close' => true] : []);
 }
 
-function current_user(): ?string
+function current_user(bool $readOnly = false): ?string
 {
-    start_session();
+    start_session($readOnly);
     $user = $_SESSION['user'] ?? null;
     if ($user === null) {
         return null;
@@ -81,12 +99,31 @@ function current_user(): ?string
 
     $idle = time() - (int) ($_SESSION['last_seen'] ?? 0);
     if ($idle > (int) config('session_idle_timeout') || !users()->exists($user)) {
-        logout();
+        if (!$readOnly) {
+            logout();
+        }
         return null;
     }
 
-    $_SESSION['last_seen'] = time();
+    if (!$readOnly) {
+        $_SESSION['last_seen'] = time();
+    }
     return $user;
+}
+
+/** Store messages and form input to show on the next page load (post/redirect/get). */
+function flash(array $data): void
+{
+    start_session();
+    $_SESSION['flash'] = $data;
+}
+
+function take_flash(): array
+{
+    start_session();
+    $data = $_SESSION['flash'] ?? [];
+    unset($_SESSION['flash']);
+    return $data;
 }
 
 function require_login(): string
@@ -126,7 +163,9 @@ function csrf_field(): string
 
 function csrf_valid(): bool
 {
-    start_session();
+    if (!isset($_SESSION)) {
+        start_session(); // Otherwise use the already-loaded (possibly read-only) session.
+    }
     $sent = $_POST['csrf'] ?? '';
     return is_string($sent) && isset($_SESSION['csrf']) && hash_equals($_SESSION['csrf'], $sent);
 }

@@ -3,73 +3,149 @@
 declare(strict_types=1);
 
 use SslScanner\Scanner;
+use SslScanner\ScanStore;
 use SslScanner\TargetParser;
 
 require dirname(__DIR__) . '/src/bootstrap.php';
 
 send_security_headers();
-require_login();
 
-$targetsInput = '';
-$portsInput = (string) config('default_ports');
-$errors = [];
-$warnings = [];
-$results = null;
-$elapsed = 0.0;
+$user = require_login();
 $warnDays = (int) config('warn_days');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $targetsInput = (string) ($_POST['targets'] ?? '');
-    $portsInput = (string) ($_POST['ports'] ?? '');
-
-    if (!csrf_valid()) {
-        $errors[] = 'Your session expired. Please submit the form again.';
+    handle_scan($user);
+    // Post/redirect/get: the result page is always rendered by a GET, so refreshing it
+    // never re-runs a scan.
+    if (is_ajax()) {
+        header('Content-Type: application/json');
+        echo json_encode(['redirect' => 'index.php']);
     } else {
-        $parser = new TargetParser((int) config('max_hosts'), (int) config('max_ports'));
-        try {
-            $ports = $parser->parsePorts($portsInput);
-            $parsed = $parser->parseTargets($targetsInput);
-            $warnings = $parsed['errors'];
-            $checks = count($parsed['targets']) * count($ports);
+        header('Location: index.php', true, 303);
+    }
+    exit;
+}
 
-            if ($parsed['targets'] === []) {
-                $errors[] = 'No valid targets to scan.';
-            } elseif ($checks > (int) config('max_checks')) {
-                $errors[] = "That would be {$checks} host/port checks; the limit is " . config('max_checks') . '. Narrow the range or the port list.';
-            } else {
-                // Release the session lock so other tabs stay usable during a long scan.
-                session_write_close();
-                set_time_limit(0);
-                ignore_user_abort(false);
+$flash = take_flash();
+$last = scans()->loadResult($user);
+$errors = $flash['errors'] ?? [];
+$warnings = $flash['warnings'] ?? ($last['warnings'] ?? []);
+$targetsInput = $flash['targets'] ?? ($last['targets'] ?? '');
+$portsInput = $flash['ports'] ?? ($last['ports'] ?? (string) config('default_ports'));
 
-                $started = microtime(true);
-                $scanner = new Scanner((float) config('timeout'), (int) config('concurrency'));
-                $results = $scanner->scan($parsed['targets'], $ports);
-                $elapsed = microtime(true) - $started;
-
-                usort($results, static function (array $a, array $b): int {
-                    if ($a['ok'] !== $b['ok']) {
-                        return $a['ok'] ? -1 : 1;
-                    }
-                    if ($a['ok'] && $a['expires'] !== $b['expires']) {
-                        return $a['expires'] <=> $b['expires'];
-                    }
-                    return [$a['host'], inet_pton((string) $a['ip']) ?: '', $a['port']]
-                        <=> [$b['host'], inet_pton((string) $b['ip']) ?: '', $b['port']];
-                });
-
-                start_session();
-                $_SESSION['last_scan'] = ['at' => time(), 'results' => $results];
-            }
-        } catch (InvalidArgumentException $e) {
-            $errors[] = $e->getMessage();
+// Show the last scan unless this page load is reporting a failed submission.
+$scan = isset($flash['errors']) ? null : $last;
+$results = $scan['results'] ?? null;
+if ($results !== null) {
+    // Days-left was a snapshot at scan time; recompute it so old results stay accurate.
+    foreach ($results as &$r) {
+        if ($r['ok']) {
+            $r['days_left'] = Scanner::daysLeft((int) $r['expires']);
         }
     }
+    unset($r);
 }
 
 $found = $results === null ? [] : array_filter($results, static fn ($r) => $r['ok']);
 $expired = array_filter($found, static fn ($r) => $r['days_left'] < 0);
 $expiring = array_filter($found, static fn ($r) => $r['days_left'] >= 0 && $r['days_left'] <= $warnDays);
+
+/**
+ * Validates the form, runs the scan while publishing progress, and saves the results.
+ * Problems are flashed to the session for the next page load.
+ */
+function handle_scan(string $user): void
+{
+    $targetsInput = (string) ($_POST['targets'] ?? '');
+    $portsInput = (string) ($_POST['ports'] ?? '');
+    $scanId = (string) ($_POST['scan_id'] ?? '');
+    $scanId = ScanStore::isValidId($scanId) ? $scanId : bin2hex(random_bytes(16));
+    $fail = static function (array $errors, array $warnings = []) use ($targetsInput, $portsInput): void {
+        flash(['errors' => $errors, 'warnings' => $warnings, 'targets' => $targetsInput, 'ports' => $portsInput]);
+    };
+
+    if (!csrf_valid()) {
+        $fail(['Your session expired. Please submit the form again.']);
+        return;
+    }
+
+    $store = scans();
+    $store->cleanup();
+    $store->writeProgress($user, $scanId, ['status' => 'preparing']);
+
+    try {
+        $parser = new TargetParser((int) config('max_hosts'), (int) config('max_ports'));
+        $ports = $parser->parsePorts($portsInput);
+        $parsed = $parser->parseTargets($targetsInput);
+    } catch (InvalidArgumentException $e) {
+        $store->clearProgress($user, $scanId);
+        $fail([$e->getMessage()]);
+        return;
+    }
+
+    $checks = count($parsed['targets']) * count($ports);
+    if ($parsed['targets'] === []) {
+        $store->clearProgress($user, $scanId);
+        $fail(['No valid targets to scan.'], $parsed['errors']);
+        return;
+    }
+    if ($checks > (int) config('max_checks')) {
+        $store->clearProgress($user, $scanId);
+        $fail(["That would be {$checks} host/port checks; the limit is " . config('max_checks') . '. Narrow the range or the port list.'], $parsed['errors']);
+        return;
+    }
+
+    // Release the session lock so progress polling and other tabs work during a long scan.
+    session_write_close();
+    set_time_limit(0);
+    // Keep going if the browser disconnects; the results are saved and shown on the next visit.
+    ignore_user_abort(true);
+
+    $started = microtime(true);
+    $lastCancelCheck = 0.0;
+    $scanner = new Scanner((float) config('timeout'), (int) config('concurrency'));
+    $results = $scanner->scan(
+        $parsed['targets'],
+        $ports,
+        static function (int $done, int $total, int $found) use ($store, $user, $scanId, $started, &$lastCancelCheck): bool {
+            $store->writeProgress($user, $scanId, [
+                'status' => 'scanning',
+                'done' => $done,
+                'total' => $total,
+                'found' => $found,
+                'elapsed' => microtime(true) - $started,
+            ]);
+            if (microtime(true) - $lastCancelCheck >= 0.5) {
+                $lastCancelCheck = microtime(true);
+                return !$store->cancelRequested($user, $scanId);
+            }
+            return true;
+        },
+    );
+
+    usort($results, static function (array $a, array $b): int {
+        if ($a['ok'] !== $b['ok']) {
+            return $a['ok'] ? -1 : 1;
+        }
+        if ($a['ok'] && $a['expires'] !== $b['expires']) {
+            return $a['expires'] <=> $b['expires'];
+        }
+        return [$a['host'], inet_pton((string) $a['ip']) ?: '', $a['port']]
+            <=> [$b['host'], inet_pton((string) $b['ip']) ?: '', $b['port']];
+    });
+
+    $store->saveResult($user, [
+        'at' => time(),
+        'targets' => $targetsInput,
+        'ports' => $portsInput,
+        'warnings' => $parsed['errors'],
+        'elapsed' => microtime(true) - $started,
+        'total' => $checks,
+        'cancelled' => $scanner->wasCancelled(),
+        'results' => $results,
+    ]);
+    $store->clearProgress($user, $scanId);
+}
 
 function status_class(array $r, int $warnDays): string
 {
@@ -104,8 +180,20 @@ require APP_ROOT . '/templates/header.php';
       </label>
     </div>
     <button type="submit" id="scan-button">Scan</button>
-    <span class="progress" id="scan-progress" hidden>Scanning… this can take a while for large ranges.</span>
+
+    <div class="scan-status" id="scan-status" hidden>
+      <div class="status-line">
+        <span id="status-text" aria-live="polite">Preparing scan…</span>
+        <button type="button" class="secondary small" id="cancel-button">Cancel</button>
+      </div>
+      <div class="bar" id="progress-bar" role="progressbar" aria-label="Scan progress" aria-valuemin="0" aria-valuemax="100">
+        <div class="fill" id="progress-fill"></div>
+      </div>
+      <div class="status-detail" id="status-detail"></div>
+    </div>
   </form>
+
+  <p class="error" role="alert" id="scan-error" hidden></p>
 
   <?php foreach ($errors as $e): ?>
     <p class="error" role="alert"><?= h($e) ?></p>
@@ -116,12 +204,17 @@ require APP_ROOT . '/templates/header.php';
 
   <?php if ($results !== null): ?>
     <section class="results">
+      <?php if (!empty($scan['cancelled'])): ?>
+        <p class="warning">Scan cancelled after <?= count($results) ?> of <?= (int) $scan['total'] ?> checks. Showing partial results.</p>
+      <?php endif; ?>
       <div class="summary">
         <span><strong><?= count($results) ?></strong> checks</span>
         <span><strong><?= count($found) ?></strong> certificates found</span>
         <span class="expired"><strong><?= count($expired) ?></strong> expired</span>
         <span class="expiring"><strong><?= count($expiring) ?></strong> expiring within <?= $warnDays ?> days</span>
-        <span class="muted"><?= number_format($elapsed, 1) ?>s</span>
+        <span class="muted" title="<?= h(gmdate('Y-m-d H:i:s', (int) $scan['at'])) ?> UTC">
+          Scanned <?= h(gmdate('Y-m-d H:i', (int) $scan['at'])) ?> UTC in <?= number_format((float) $scan['elapsed'], 1) ?>s
+        </span>
         <span class="spacer"></span>
         <label class="toggle"><input type="checkbox" id="show-failures"> Show addresses with no certificate (<?= count($results) - count($found) ?>)</label>
         <?php if ($results !== []): ?>

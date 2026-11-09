@@ -13,6 +13,10 @@ namespace SslScanner;
  */
 final class Scanner
 {
+    private const PROGRESS_INTERVAL = 0.25;
+
+    private bool $cancelled = false;
+
     public function __construct(
         private float $timeout = 4.0,
         private int $concurrency = 64,
@@ -22,10 +26,14 @@ final class Scanner
     /**
      * @param list<array{label: string, ip: ?string, sni: ?string, error: ?string}> $targets
      * @param list<int> $ports
+     * @param (callable(int $done, int $total, int $found): bool|void)|null $onProgress
+     *        Called periodically and once at the end. Return false to cancel the scan;
+     *        checks still in flight are abandoned and only finished results are returned.
      * @return list<array<string, mixed>>
      */
-    public function scan(array $targets, array $ports): array
+    public function scan(array $targets, array $ports, ?callable $onProgress = null): array
     {
+        $this->cancelled = false;
         $queue = [];
         $results = [];
         foreach ($targets as $t) {
@@ -39,12 +47,27 @@ final class Scanner
             }
         }
 
+        $total = count($results) + count($queue);
+        $next = 0;
+        $lastReport = 0.0;
+
         /** @var array<int, array{job: array, stream: resource, phase: string, deadline: float}> $active */
         $active = [];
 
-        while ($queue !== [] || $active !== []) {
-            while ($queue !== [] && count($active) < $this->concurrency) {
-                $job = array_shift($queue);
+        while ($next < count($queue) || $active !== []) {
+            if ($onProgress !== null && microtime(true) - $lastReport >= self::PROGRESS_INTERVAL) {
+                $lastReport = microtime(true);
+                if ($onProgress(count($results), $total, self::countFound($results)) === false) {
+                    $this->cancelled = true;
+                    foreach ($active as $conn) {
+                        fclose($conn['stream']);
+                    }
+                    return $results;
+                }
+            }
+
+            while ($next < count($queue) && count($active) < $this->concurrency) {
+                $job = $queue[$next++];
                 $stream = $this->open($job, $error);
                 if ($stream === null) {
                     $results[] = self::failure($job, $error);
@@ -81,6 +104,7 @@ final class Scanner
                     continue;
                 }
                 $active[$id]['phase'] = 'tls';
+                $active[$id]['deadline'] = microtime(true) + $this->timeout;
                 $this->stepHandshake($active, $id, $results);
             }
 
@@ -102,7 +126,31 @@ final class Scanner
             }
         }
 
+        if ($onProgress !== null) {
+            $onProgress(count($results), $total, self::countFound($results));
+        }
+
         return $results;
+    }
+
+    /** Whether the most recent scan() was stopped early by the progress callback. */
+    public function wasCancelled(): bool
+    {
+        return $this->cancelled;
+    }
+
+    /** Whole days remaining; once expired, a negative count of whole days since (at least -1). */
+    public static function daysLeft(int $expires, ?int $now = null): int
+    {
+        $now ??= time();
+        return $expires >= $now
+            ? intdiv($expires - $now, 86400)
+            : -max(1, intdiv($now - $expires, 86400));
+    }
+
+    private static function countFound(array $results): int
+    {
+        return count(array_filter($results, static fn ($r) => $r['ok']));
     }
 
     /**
@@ -214,10 +262,7 @@ final class Scanner
             'self_signed' => ($info['subject'] ?? null) == ($info['issuer'] ?? null),
             'issued' => $issued,
             'expires' => $expires,
-            // Whole days remaining; once expired, a negative count of whole days since (at least -1).
-            'days_left' => $expires >= time()
-                ? intdiv($expires - time(), 86400)
-                : -max(1, intdiv(time() - $expires, 86400)),
+            'days_left' => self::daysLeft($expires),
             'serial' => $info['serialNumberHex'] ?? null,
             'fingerprint' => openssl_x509_fingerprint($cert, 'sha256') ?: null,
         ];
