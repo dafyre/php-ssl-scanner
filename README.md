@@ -12,7 +12,7 @@ Enter hostnames, IP addresses, or whole subnets in CIDR notation, plus a list of
 
 While a scan runs, a progress bar shows how many address/port checks are done, certificates found so far, elapsed time, and an estimate of the time left. A **Cancel** button stops the scan and keeps the partial results.
 
-Results can be sorted by any column and downloaded as CSV, and your most recent scan stays on the page when you come back. The app requires a username and password.
+Results can be filtered, sorted by any column, and downloaded as CSV. Runs can be saved by name and loaded later, or downloaded and imported as JSON. Your most recent scan stays on the page when you come back. The app requires a username and password.
 
 ## Requirements
 
@@ -103,6 +103,26 @@ Default limits per scan are 1024 addresses, 64 ports, and 8192 total address/por
 - Certificate validation is **intentionally disabled**. The goal is to report what each server presents, including expired, self-signed, and mismatched certificates, not to decide whether to trust it. Legacy protocols and ciphers are allowed so older appliances still report their certificates.
 - When a target is a hostname, its name is sent as SNI so you get the certificate for that site. Bare IPs and CIDR ranges are scanned without SNI, which returns each server's default certificate.
 
+## Filtering results
+
+The filter bar above the results narrows the table instantly:
+
+- **Search** matches host, IP, common name, any SAN, issuer, or error message. Several words must all match.
+- **Status** chips: Expired, Expiring (within the `warn_days` setting, 30 by default), Valid, and No certificate. Addresses with no certificate are hidden by default.
+- **Port**, **Issuer**, and **Self-signed** dropdowns.
+- **Expires within N days** shows only certificates expiring in that window, including ones that have already expired.
+
+**Download CSV** exports exactly the rows that match the current filters; the button shows how many.
+
+## Saving and loading runs
+
+- **Save run** (next to the results) stores the current scan under a name. Leave the name blank to use the targets and date.
+- **Saved runs** (top menu) lists your runs with how many certificates are expired or expiring *as of today*. From there you can load, rename, download, or delete a run.
+- **Loading** a run puts it on the scan page, so you can filter and export it. The form is pre-filled with that run's targets and ports, so pressing **Scan** re-runs it.
+- **Download JSON** saves a run to a file. **Import a run** on the Saved runs page loads such a file back, for example on another server or from a backup. Imported files are validated before they're accepted.
+
+Saved runs are private to each user and stored in `data/scans/`.
+
 ## How progress works
 
 The scan page sends the scan request in the background and polls `progress.php` about once a second. The running scan writes its progress to a small file in `data/scans/`. Each user's latest results are saved there too, so they're still available after a page reload, and the CSV export uses them.
@@ -129,12 +149,13 @@ php tests/run.php
 Project layout:
 
 ```
-public/      web root: pages, progress endpoint, CSS, JS
+public/      web root: scan page, saved runs, CSV export, progress endpoint, CSS, JS
 src/         TargetParser (input parsing, CIDR expansion), Scanner (parallel TLS),
-             ScanStore (progress + saved results), UserStore, LoginThrottle, bootstrap helpers
+             ScanStore (progress, latest results, saved runs, import validation),
+             UserStore, LoginThrottle, bootstrap helpers
 templates/   shared page header and footer
 bin/         command-line user management
 config/      config.example.php (copy to config.php)
-data/        runtime data: users, login throttle, scan progress and results (git-ignored)
+data/        runtime data: users, login throttle, scan progress, results, saved runs (git-ignored)
 tests/       dependency-free tests
 ```

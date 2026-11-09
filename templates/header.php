@@ -13,7 +13,11 @@ $user = $_SESSION['user'] ?? null;
 <body>
 <?php if ($user !== null): ?>
 <header class="topbar">
-  <a class="brand" href="index.php"><?= h(config('app_name')) ?></a>
+  <nav class="nav">
+    <a class="brand" href="index.php"><?= h(config('app_name')) ?></a>
+    <a href="index.php"<?= ($title ?? '') === 'Scan' ? ' aria-current="page"' : '' ?>>Scan</a>
+    <a href="runs.php"<?= ($title ?? '') === 'Saved runs' ? ' aria-current="page"' : '' ?>>Saved runs</a>
+  </nav>
   <form method="post" action="logout.php" class="logout">
     <span class="who">Signed in as <strong><?= h($user) ?></strong></span>
     <?= csrf_field() ?>

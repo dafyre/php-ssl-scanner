@@ -1,6 +1,13 @@
 (function () {
   'use strict';
 
+  // Ask before destructive actions (forms marked with data-confirm).
+  document.querySelectorAll('form[data-confirm]').forEach(function (f) {
+    f.addEventListener('submit', function (e) {
+      if (!window.confirm(f.dataset.confirm)) e.preventDefault();
+    });
+  });
+
   var form = document.getElementById('scan-form');
   if (form && window.fetch && window.FormData) {
     initScanProgress(form);
@@ -176,12 +183,80 @@
     return;
   }
 
-  // Toggle rows for addresses that returned no certificate.
-  var toggle = document.getElementById('show-failures');
-  if (toggle) {
-    toggle.addEventListener('change', function () {
-      table.classList.toggle('hide-failures', !toggle.checked);
+  initFilters(table);
+
+  // Filter rows by search text, status, port, issuer, self-signed, and days to expiry.
+  // The CSV download follows the filters: it exports exactly the rows on screen.
+  function initFilters(table) {
+    var rows = Array.prototype.slice.call(table.tBodies[0].rows);
+    var search = document.getElementById('f-search');
+    var port = document.getElementById('f-port');
+    var issuer = document.getElementById('f-issuer');
+    var self = document.getElementById('f-self');
+    var within = document.getElementById('f-within');
+    var chips = Array.prototype.slice.call(document.querySelectorAll('#filters .chip'));
+    var count = document.getElementById('f-count');
+    var clear = document.getElementById('f-clear');
+    var noMatches = document.getElementById('no-matches');
+    var exportRows = document.getElementById('export-rows');
+    var exportButton = document.getElementById('export-button');
+    var defaults = chips.map(function (c) { return c.getAttribute('aria-pressed'); });
+    var debounce = null;
+
+    chips.forEach(function (chip) {
+      chip.addEventListener('click', function () {
+        chip.setAttribute('aria-pressed', chip.getAttribute('aria-pressed') === 'true' ? 'false' : 'true');
+        apply();
+      });
     });
+    [port, issuer, self].forEach(function (el) { el.addEventListener('change', apply); });
+    [search, within].forEach(function (el) {
+      el.addEventListener('input', function () {
+        clearTimeout(debounce);
+        debounce = setTimeout(apply, 120);
+      });
+    });
+    clear.addEventListener('click', function () {
+      search.value = '';
+      port.value = issuer.value = self.value = within.value = '';
+      chips.forEach(function (c, i) { c.setAttribute('aria-pressed', defaults[i]); });
+      apply();
+    });
+
+    function apply() {
+      var terms = search.value.toLowerCase().split(/\s+/).filter(Boolean);
+      var statuses = {};
+      chips.forEach(function (c) { statuses[c.dataset.status] = c.getAttribute('aria-pressed') === 'true'; });
+      var maxDays = within.value === '' ? null : Number(within.value);
+      var visible = [];
+
+      rows.forEach(function (row) {
+        var d = row.dataset;
+        var show = statuses[d.status] &&
+          (!port.value || d.port === port.value) &&
+          (!issuer.value || d.issuer === issuer.value) &&
+          (!self.value || d.self === self.value) &&
+          (maxDays === null || (d.days !== '' && Number(d.days) <= maxDays)) &&
+          terms.every(function (t) { return d.search.indexOf(t) !== -1; });
+        row.hidden = !show;
+        if (show) visible.push(d.index);
+      });
+
+      var isDefault = !terms.length && !port.value && !issuer.value && !self.value && maxDays === null &&
+        chips.every(function (c, i) { return c.getAttribute('aria-pressed') === defaults[i]; });
+      count.textContent = 'Showing ' + fmt(visible.length) + ' of ' + fmt(rows.length);
+      clear.hidden = isDefault;
+      noMatches.hidden = visible.length > 0;
+
+      if (exportRows) {
+        // Empty means "everything"; otherwise send the indexes of the rows on screen.
+        exportRows.value = visible.length === rows.length ? '' : (visible.length ? visible.join(',') : 'none');
+        exportButton.textContent = 'Download CSV (' + fmt(visible.length) + ')';
+        exportButton.disabled = visible.length === 0;
+      }
+    }
+
+    apply();
   }
 
   // Click a column header to sort; click again to reverse.

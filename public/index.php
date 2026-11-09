@@ -50,6 +50,22 @@ $found = $results === null ? [] : array_filter($results, static fn ($r) => $r['o
 $expired = array_filter($found, static fn ($r) => $r['days_left'] < 0);
 $expiring = array_filter($found, static fn ($r) => $r['days_left'] >= 0 && $r['days_left'] <= $warnDays);
 
+// Options for the filter dropdowns.
+$portOptions = $results === null ? [] : array_values(array_unique(array_column($results, 'port')));
+sort($portOptions);
+$issuerOptions = array_count_values(array_map(static fn ($r) => (string) $r['issuer'], $found));
+ksort($issuerOptions, SORT_NATURAL | SORT_FLAG_CASE);
+
+// If this scan is (still) a saved run, show its name instead of the save form.
+$savedName = null;
+if ($scan !== null && isset($scan['saved_id'])) {
+    foreach (scans()->listRuns($user) as $run) {
+        if ($run['id'] === $scan['saved_id']) {
+            $savedName = $run['name'];
+        }
+    }
+}
+
 /**
  * Validates the form, runs the scan while publishing progress, and saves the results.
  * Problems are flashed to the session for the next page load.
@@ -158,6 +174,13 @@ function status_class(array $r, int $warnDays): string
     return $r['days_left'] <= $warnDays ? 'expiring' : 'valid';
 }
 
+/** Lower-cased text the search box matches against. */
+function search_text(array $r): string
+{
+    $text = implode(' ', array_filter([$r['host'], $r['ip'], $r['cn'], implode(' ', $r['sans']), $r['issuer'], $r['error']]));
+    return function_exists('mb_strtolower') ? mb_strtolower($text) : strtolower($text);
+}
+
 function fmt_date(?int $ts): string
 {
     return $ts ? '<time datetime="' . gmdate('c', $ts) . '" title="' . gmdate('Y-m-d H:i:s', $ts) . ' UTC">' . gmdate('Y-m-d', $ts) . '</time>' : '';
@@ -198,6 +221,9 @@ require APP_ROOT . '/templates/header.php';
   <?php foreach ($errors as $e): ?>
     <p class="error" role="alert"><?= h($e) ?></p>
   <?php endforeach; ?>
+  <?php if (isset($flash['notice'])): ?>
+    <p class="notice ok" role="status"><?= h($flash['notice']) ?> <a href="runs.php">View saved runs</a></p>
+  <?php endif; ?>
   <?php foreach ($warnings as $w): ?>
     <p class="warning"><?= h($w) ?></p>
   <?php endforeach; ?>
@@ -207,27 +233,83 @@ require APP_ROOT . '/templates/header.php';
       <?php if (!empty($scan['cancelled'])): ?>
         <p class="warning">Scan cancelled after <?= count($results) ?> of <?= (int) $scan['total'] ?> checks. Showing partial results.</p>
       <?php endif; ?>
-      <div class="summary">
-        <span><strong><?= count($results) ?></strong> checks</span>
-        <span><strong><?= count($found) ?></strong> certificates found</span>
-        <span class="expired"><strong><?= count($expired) ?></strong> expired</span>
-        <span class="expiring"><strong><?= count($expiring) ?></strong> expiring within <?= $warnDays ?> days</span>
-        <span class="muted" title="<?= h(gmdate('Y-m-d H:i:s', (int) $scan['at'])) ?> UTC">
-          Scanned <?= h(gmdate('Y-m-d H:i', (int) $scan['at'])) ?> UTC in <?= number_format((float) $scan['elapsed'], 1) ?>s
-        </span>
-        <span class="spacer"></span>
-        <label class="toggle"><input type="checkbox" id="show-failures"> Show addresses with no certificate (<?= count($results) - count($found) ?>)</label>
-        <?php if ($results !== []): ?>
-          <a class="button secondary" href="export.php">Download CSV</a>
-        <?php endif; ?>
+
+      <div class="run-header">
+        <div class="run-title">
+          <h2><?= $savedName !== null ? h($savedName) : 'Latest scan' ?></h2>
+          <p class="muted">
+            <?= count($results) ?> checks · <?= count($found) ?> certificates found ·
+            scanned <span title="<?= h(gmdate('Y-m-d H:i:s', (int) $scan['at'])) ?> UTC"><?= h(gmdate('Y-m-d H:i', (int) $scan['at'])) ?> UTC</span>
+            in <?= number_format((float) $scan['elapsed'], 1) ?>s
+            <?php if ($savedName !== null): ?> · <span class="tag">saved run</span><?php endif; ?>
+          </p>
+        </div>
+        <div class="run-actions">
+          <?php if ($savedName === null): ?>
+            <form method="post" action="runs.php" class="save-run">
+              <?= csrf_field() ?>
+              <input type="hidden" name="action" value="save">
+              <input name="name" maxlength="120" aria-label="Name for this run" placeholder="<?= h(ScanStore::defaultName($scan)) ?>">
+              <button type="submit" class="small">Save run</button>
+            </form>
+          <?php endif; ?>
+          <a class="button secondary small" href="runs.php?download=current">Download JSON</a>
+        </div>
       </div>
 
-      <?php if ($found === []): ?>
-        <p class="empty" id="empty-note">No certificates were found. Tick “Show addresses with no certificate” to see why each check failed.</p>
-      <?php endif; ?>
+      <div class="filters card" id="filters">
+        <div class="filter-row">
+          <label class="grow">Search
+            <input type="search" id="f-search" placeholder="Host, IP, name, SAN, or issuer" autocomplete="off">
+          </label>
+          <label>Port
+            <select id="f-port">
+              <option value="">All ports</option>
+              <?php foreach ($portOptions as $p): ?><option value="<?= $p ?>"><?= $p ?></option><?php endforeach; ?>
+            </select>
+          </label>
+          <label>Issuer
+            <select id="f-issuer">
+              <option value="">All issuers</option>
+              <?php foreach ($issuerOptions as $iss => $n): ?><option value="<?= h($iss) ?>"><?= h($iss) ?> (<?= $n ?>)</option><?php endforeach; ?>
+            </select>
+          </label>
+          <label>Self-signed
+            <select id="f-self">
+              <option value="">Any</option>
+              <option value="1">Only self-signed</option>
+              <option value="0">Exclude self-signed</option>
+            </select>
+          </label>
+          <label>Expires within
+            <span class="with-unit"><input type="number" id="f-within" min="0" step="1" inputmode="numeric" placeholder="any"> days</span>
+          </label>
+        </div>
+        <div class="filter-row status-row">
+          <div class="chips" role="group" aria-label="Status">
+            <button type="button" class="chip expired" data-status="expired" aria-pressed="true">Expired <b><?= count($expired) ?></b></button>
+            <button type="button" class="chip expiring" data-status="expiring" aria-pressed="true">Expiring ≤ <?= $warnDays ?> days <b><?= count($expiring) ?></b></button>
+            <button type="button" class="chip valid" data-status="valid" aria-pressed="true">Valid <b><?= count($found) - count($expired) - count($expiring) ?></b></button>
+            <button type="button" class="chip none" data-status="none" aria-pressed="false">No certificate <b><?= count($results) - count($found) ?></b></button>
+          </div>
+          <span class="spacer"></span>
+          <span class="muted" id="f-count" aria-live="polite"></span>
+          <button type="button" class="link" id="f-clear" hidden>Clear filters</button>
+          <?php if ($results !== []): ?>
+            <form method="post" action="export.php" id="export-form">
+              <?= csrf_field() ?>
+              <input type="hidden" name="rows" id="export-rows" value="">
+              <input type="hidden" name="scan_at" value="<?= (int) $scan['at'] ?>">
+              <button type="submit" class="secondary small" id="export-button">Download CSV</button>
+            </form>
+          <?php endif; ?>
+        </div>
+      </div>
+
+      <p class="empty" id="no-matches" hidden>No results match these filters.</p>
 
       <div class="table-wrap">
-        <table id="results" class="hide-failures">
+        <table id="results">
           <thead>
             <tr>
               <th data-sort="text">Host</th>
@@ -242,8 +324,15 @@ require APP_ROOT . '/templates/header.php';
             </tr>
           </thead>
           <tbody>
-          <?php foreach ($results as $r): $cls = status_class($r, $warnDays); ?>
-            <tr class="<?= $cls ?>">
+          <?php foreach ($results as $i => $r): $cls = status_class($r, $warnDays); ?>
+            <tr class="<?= $cls ?>"
+                data-index="<?= $i ?>"
+                data-status="<?= $cls ?>"
+                data-port="<?= (int) $r['port'] ?>"
+                data-issuer="<?= h($r['issuer'] ?? '') ?>"
+                data-self="<?= $r['self_signed'] ? '1' : '0' ?>"
+                data-days="<?= $r['ok'] ? (int) $r['days_left'] : '' ?>"
+                data-search="<?= h(search_text($r)) ?>">
               <td><?= h($r['host']) ?></td>
               <td data-value="<?= h($r['ip'] ?? '') ?>"><?= h($r['ip'] ?? '—') ?></td>
               <td data-value="<?= (int) $r['port'] ?>"><?= (int) $r['port'] ?></td>

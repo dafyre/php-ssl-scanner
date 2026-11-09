@@ -104,6 +104,35 @@ check('progress cleared', $store->readProgress('alice', $id) === null && !$store
 check('rejects path-like ids', throws(fn () => $store->readProgress('alice', '../../etc/passwd')));
 $store->saveResult('alice', ['results' => [1, 2]]);
 check('results saved per user', $store->loadResult('alice') === ['results' => [1, 2]] && $store->loadResult('bob') === null);
+echo "Saved runs\n";
+$cert = ['host' => 'a.test', 'ip' => '10.0.0.1', 'port' => 443, 'sni' => 'a.test', 'ok' => true, 'error' => null,
+    'cn' => 'a.test', 'sans' => ['a.test', 'www.a.test'], 'issuer' => 'Test CA', 'self_signed' => false,
+    'issued' => $now - 86400, 'expires' => time() + 86400 * 10, 'days_left' => 10, 'serial' => '01', 'fingerprint' => 'ab'];
+$miss = ['host' => '10.0.0.2', 'ip' => '10.0.0.2', 'port' => 443, 'sni' => null, 'ok' => false, 'error' => 'Connection timed out'];
+$scan = ['at' => $now, 'targets' => "a.test\n10.0.0.2", 'ports' => '443', 'warnings' => [], 'elapsed' => 1.5, 'total' => 2, 'cancelled' => false, 'results' => [$cert, $miss]];
+
+$runId = $store->saveRun('alice', $scan, '  Weekly   check ');
+check('run saved with cleaned name', ($store->listRuns('alice')[0]['name'] ?? null) === 'Weekly check');
+check('run list has counts', ($store->listRuns('alice')[0]['found'] ?? null) === 1 && $store->listRuns('alice')[0]['checks'] === 2);
+check('runs are per user', $store->listRuns('bob') === [] && $store->loadRun('bob', $runId) === null);
+$loaded = $store->loadRun('alice', $runId);
+check('run loads with results', count($loaded['results']) === 2 && $loaded['results'][0]['sans'] === ['a.test', 'www.a.test'] && $loaded['saved_id'] === $runId);
+$auto = $store->saveRun('alice', $scan, '');
+check('blank name gets a default', str_starts_with($store->loadRun('alice', $auto)['name'], 'a.test, 10.0.0.2 — '));
+check('rename works', $store->renameRun('alice', $runId, 'Renamed') && $store->loadRun('alice', $runId)['name'] === 'Renamed');
+check('delete works', $store->deleteRun('alice', $runId) && $store->loadRun('alice', $runId) === null && count($store->listRuns('alice')) === 1);
+check('bad run id rejected', $store->loadRun('alice', '../../x') === null && !$store->deleteRun('alice', 'zz'));
+
+echo "Import validation\n";
+$exported = json_decode(json_encode(ScanStore::exportRun($scan)), true);
+check('export has format marker', $exported['format'] === 'php-ssl-scanner/run');
+check('export round-trips', ScanStore::normalizeRun($exported)['results'][0]['cn'] === 'a.test');
+check('rejects non-run JSON', throws(fn () => ScanStore::normalizeRun(['hello' => 'world'])));
+check('rejects bad port', throws(fn () => ScanStore::normalizeRun(['results' => [['host' => 'x', 'port' => 70000]]])));
+check('rejects cert without expiry', throws(fn () => ScanStore::normalizeRun(['results' => [['host' => 'x', 'port' => 443, 'ok' => true]]])));
+$dirty = ScanStore::normalizeRun(['results' => [['host' => 'x', 'port' => '443', 'ok' => true, 'expires' => '2000000000', 'ip' => 'not-an-ip', 'sans' => ['a', ['nested']], 'evil' => 1]]]);
+check('import coerces and drops junk', $dirty['results'][0]['port'] === 443 && $dirty['results'][0]['ip'] === null && $dirty['results'][0]['sans'] === ['a'] && !isset($dirty['results'][0]['evil']));
+
 array_map('unlink', glob($dir . '/*'));
 rmdir($dir);
 

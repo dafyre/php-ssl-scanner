@@ -33,6 +33,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 
 body {
   margin: 0;
@@ -141,7 +142,6 @@ textarea:read-only, input:read-only { opacity: 0.7; }
 .summary .expired strong { color: var(--expired); }
 .summary .expiring strong { color: var(--expiring); }
 .summary .spacer { flex: 1; }
-.toggle { flex-direction: row; align-items: center; gap: 6px; font-weight: 400; cursor: pointer; }
 
 .table-wrap {
   overflow-x: auto;
@@ -170,7 +170,6 @@ tr.expiring td.days { color: var(--expiring); }
 tr.expired { background: var(--expired-bg); }
 tr.expired td.days { color: var(--expired); }
 tr.none td { color: var(--muted); }
-table.hide-failures tr.none { display: none; }
 
 .tag {
   display: inline-block;
@@ -183,3 +182,72 @@ table.hide-failures tr.none { display: none; }
   color: var(--muted);
 }
 .muted { color: var(--muted); }
+
+/* Navigation */
+.nav { display: flex; align-items: center; gap: 20px; }
+.nav a:not(.brand) { color: var(--muted); text-decoration: none; font-weight: 500; }
+.nav a:not(.brand):hover, .nav a[aria-current="page"] { color: var(--text); }
+.nav a[aria-current="page"] { box-shadow: inset 0 -2px 0 var(--accent); padding-bottom: 2px; }
+
+h1, h2 { margin: 0; }
+h1 { font-size: 1.4rem; }
+h2 { font-size: 1.15rem; }
+.page-head { margin-bottom: 16px; }
+.page-head p { margin: 4px 0 0; }
+.notice.ok { background: color-mix(in srgb, var(--valid) 14%, var(--surface)); color: var(--text); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* Run header + save */
+.run-header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.run-title p { margin: 4px 0 0; }
+.run-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.save-run { display: flex; gap: 6px; margin: 0; }
+.save-run input { width: 300px; max-width: 60vw; padding: 5px 10px; }
+
+/* Filters */
+.filters { padding: 14px 16px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 12px; }
+.filter-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 14px; }
+.filter-row label { font-size: 0.82rem; color: var(--muted); font-weight: 600; gap: 4px; }
+.filter-row label.grow { flex: 1 1 260px; }
+.filter-row input, .filter-row select { padding: 6px 9px; font-size: 0.95rem; color: var(--text); }
+select { font: inherit; background: var(--bg); color: inherit; border: 1px solid var(--border); border-radius: 6px; max-width: 260px; }
+.with-unit { display: flex; align-items: center; gap: 6px; color: var(--muted); font-weight: 400; }
+.with-unit input { width: 80px; }
+.status-row { align-items: center; }
+.status-row .spacer { flex: 1; }
+#export-form { margin: 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  background: var(--bg); color: var(--muted); border: 1px solid var(--border);
+  font-weight: 500; padding: 5px 12px; border-radius: 999px; font-size: 0.9rem;
+}
+.chip b { margin-left: 4px; font-variant-numeric: tabular-nums; }
+.chip[aria-pressed="true"] { color: var(--text); border-color: currentColor; }
+.chip.expired[aria-pressed="true"] { background: var(--expired-bg); color: var(--expired); }
+.chip.expiring[aria-pressed="true"] { background: var(--expiring-bg); color: var(--expiring); }
+.chip.valid[aria-pressed="true"] { color: var(--valid); background: color-mix(in srgb, var(--valid) 10%, var(--surface)); }
+.chip.none[aria-pressed="true"] { background: var(--surface); }
+.chip[aria-pressed="false"] { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted) 60%, transparent); }
+
+/* Saved runs page */
+table.runs td { vertical-align: middle; }
+table.runs th.num, table.runs td.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.runs tr.current { background: color-mix(in srgb, var(--accent) 7%, var(--surface)); }
+.targets-cell { max-width: 280px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.88rem; }
+.expired-text { color: var(--expired); font-weight: 600; }
+.expiring-text { color: var(--expiring); font-weight: 600; }
+td.actions { white-space: nowrap; text-align: right; }
+td.actions form { display: inline; margin: 0; }
+td.actions > * { margin-left: 6px; vertical-align: middle; }
+button.danger { color: var(--expired); }
+.rename { margin-top: 4px; }
+.rename summary { cursor: pointer; color: var(--muted); font-size: 0.85rem; display: inline; }
+.rename form { display: flex; gap: 6px; margin-top: 6px; }
+.rename input { padding: 4px 8px; min-width: 220px; }
+.import-form { margin-top: 24px; }
+.import-form h2 { margin-bottom: 4px; }
+.import-form p { margin: 0 0 14px; }
+.import-fields { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px; }
+.import-fields label { flex: 0 1 320px; }
+.import-fields input[type=file] { padding: 6px; }
+.nowrap { white-space: nowrap; }
