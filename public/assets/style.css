@@ -254,3 +254,21 @@ button.danger { color: var(--expired); }
 .error.setup p { margin: 6px 0; }
 .error.setup code { display: block; margin-top: 6px; padding: 6px 8px; background: var(--surface); color: var(--text); border-radius: 4px; word-break: break-all; }
 .error.setup.banner { margin: 0; border-radius: 0; padding: 10px 24px; } .error.setup.banner code { display: inline; }
+
+/* Results table: fixed column proportions so it fits a 1100px-wide window without
+   scrolling sideways. Long names wrap inside their column instead of widening it. */
+#results { table-layout: fixed; font-size: 0.875rem; }
+#results th, #results td { padding: 8px 8px; }
+#results th { font-size: 0.75rem; letter-spacing: 0.02em; vertical-align: bottom; }
+#results th.wrap { white-space: normal; letter-spacing: 0; }
+#results col.c-host   { width: 11%; }
+#results col.c-ip     { width: 10%; }
+#results col.c-port   { width: 5.5%; }
+#results col.c-cn     { width: 14.5%; }
+#results col.c-san    { width: 15.5%; }
+#results col.c-issuer { width: 13.5%; }
+#results col.c-date   { width: 9%; }
+#results col.c-days   { width: 12%; }
+#results td.host, #results td.cn, #results td.sans li, #results td.issuer { word-break: normal; overflow-wrap: anywhere; }
+#results td.issuer .tag { white-space: nowrap; }
+#results td:nth-child(2) { overflow-wrap: anywhere; }

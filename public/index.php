@@ -310,13 +310,17 @@ require APP_ROOT . '/templates/header.php';
 
       <div class="table-wrap">
         <table id="results">
+          <colgroup>
+            <col class="c-host"><col class="c-ip"><col class="c-port"><col class="c-cn"><col class="c-san">
+            <col class="c-issuer"><col class="c-date"><col class="c-date"><col class="c-days">
+          </colgroup>
           <thead>
             <tr>
               <th data-sort="text">Host</th>
               <th data-sort="ip">IP address</th>
               <th data-sort="num">Port</th>
               <th data-sort="text">Common name (CN)</th>
-              <th>Subject alternative names (SAN)</th>
+              <th class="wrap"><span class="nowrap">Subject alternative</span><br><span class="nowrap">names (SAN)</span></th>
               <th data-sort="text">Issuer</th>
               <th data-sort="num">Issued</th>
               <th data-sort="num">Expires</th>
@@ -333,7 +337,7 @@ require APP_ROOT . '/templates/header.php';
                 data-self="<?= $r['self_signed'] ? '1' : '0' ?>"
                 data-days="<?= $r['ok'] ? (int) $r['days_left'] : '' ?>"
                 data-search="<?= h(search_text($r)) ?>">
-              <td><?= h($r['host']) ?></td>
+              <td class="host"><?= h($r['host']) ?></td>
               <td data-value="<?= h($r['ip'] ?? '') ?>"><?= h($r['ip'] ?? '—') ?></td>
               <td data-value="<?= (int) $r['port'] ?>"><?= (int) $r['port'] ?></td>
               <?php if ($r['ok']): ?>
@@ -345,7 +349,7 @@ require APP_ROOT . '/templates/header.php';
                     <ul><?php foreach ($r['sans'] as $san): ?><li><?= h($san) ?></li><?php endforeach; ?></ul>
                   <?php endif; ?>
                 </td>
-                <td><?= h($r['issuer'] ?? '') ?><?= $r['self_signed'] ? ' <span class="tag">self-signed</span>' : '' ?></td>
+                <td class="issuer"><?= h($r['issuer'] ?? '') ?><?= $r['self_signed'] ? ' <span class="tag">self-signed</span>' : '' ?></td>
                 <td data-value="<?= (int) $r['issued'] ?>"><?= fmt_date($r['issued']) ?></td>
                 <td data-value="<?= (int) $r['expires'] ?>"><?= fmt_date($r['expires']) ?></td>
                 <td data-value="<?= (int) $r['days_left'] ?>" class="days">
