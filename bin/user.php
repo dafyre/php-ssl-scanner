@@ -50,6 +50,31 @@ function read_new_password(): string
     return $first;
 }
 
+/**
+ * Running this script as root creates data/ owned by root, which the web server can't
+ * read, so every login fails. Spot that and print the fix.
+ */
+function warn_if_root_owned(): void
+{
+    if (!function_exists('posix_geteuid') || posix_geteuid() !== 0) {
+        return;
+    }
+    $dir = (string) config('data_dir');
+    if (fileowner($dir) === 0) {
+        fwrite(STDERR, <<<TXT
+
+        Warning: {$dir} is owned by root, so the web server can't read it and logins will fail.
+        Give it to the web server user, e.g.:
+
+            sudo chown -R www-data:www-data {$dir}     (Debian/Ubuntu)
+            sudo chown -R apache:apache {$dir}         (RHEL/CentOS/Fedora)
+
+        Next time, run this script as that user: sudo -u www-data php bin/user.php ...
+
+        TXT);
+    }
+}
+
 $command = $argv[1] ?? '';
 $username = $argv[2] ?? '';
 
@@ -62,6 +87,7 @@ try {
             }
             users()->setPassword($username, read_new_password(), $command === 'add');
             echo $command === 'add' ? "Created user {$username}.\n" : "Updated password for {$username}.\n";
+            warn_if_root_owned();
             break;
 
         case 'delete':

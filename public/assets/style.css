@@ -251,3 +251,6 @@ button.danger { color: var(--expired); }
 .import-fields label { flex: 0 1 320px; }
 .import-fields input[type=file] { padding: 6px; }
 .nowrap { white-space: nowrap; }
+.error.setup p { margin: 6px 0; }
+.error.setup code { display: block; margin-top: 6px; padding: 6px 8px; background: var(--surface); color: var(--text); border-radius: 4px; word-break: break-all; }
+.error.setup.banner { margin: 0; border-radius: 0; padding: 10px 24px; } .error.setup.banner code { display: inline; }

@@ -24,4 +24,9 @@ $user = $_SESSION['user'] ?? null;
     <button type="submit" class="link">Sign out</button>
   </form>
 </header>
+<?php foreach (storage_problems() as $problem): ?>
+<div class="error setup banner" role="alert">
+  <strong>Setup problem:</strong> <?= h($problem) ?> Fix it on the server with <code><?= h(storage_fix_command()) ?></code>
+</div>
+<?php endforeach; ?>
 <?php endif; ?>

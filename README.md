@@ -29,13 +29,17 @@ Results can be filtered, sorted by any column, and downloaded as CSV. Runs can b
    cd php-ssl-scanner
    ```
 
-2. **Create a user** (you'll be prompted for a password, minimum 8 characters):
+2. **Create the data folder and your first user, as the web server's user.** The app stores accounts, saved runs, and scan results in `data/`, and the web server must be able to read and write it. The web server user is usually `www-data` on Debian/Ubuntu and `apache` on RHEL/CentOS/Fedora.
 
    ```sh
-   php bin/user.php add admin
+   sudo -u www-data php bin/user.php add admin
    ```
 
-   Accounts are stored with hashed passwords in `data/users.json`. The web server user needs read/write access to `data/`.
+   You'll be prompted for a password (minimum 8 characters). If you've already created users as root or as yourself, fix the ownership with:
+
+   ```sh
+   sudo chown -R www-data:www-data data
+   ```
 
 3. **Point your web server's document root at `public/`.** Only that folder should be web-accessible; `src/`, `config/`, `data/`, and `bin/` must not be.
 
@@ -73,6 +77,8 @@ server {
 ```
 
 ## Managing users
+
+Run these as the web server user (for example `sudo -u www-data php bin/user.php ...`). If you run them as root, the script keeps the files owned by whoever owns `data/`, and warns you if that's root.
 
 ```sh
 php bin/user.php add <username>      # create a user
@@ -137,6 +143,18 @@ Without JavaScript, the form still works as a normal submit; it just doesn't sho
 - After 5 failed logins within 15 minutes, an IP address is locked out for the rest of that window.
 - All forms are protected with CSRF tokens. Sessions are HTTP-only and `SameSite=Strict`, and they time out after 30 minutes of inactivity.
 - Anyone with an account can make the server connect to arbitrary addresses and ports. Only give accounts to people you trust with that, and consider network-level restrictions on where the server may connect.
+
+## Troubleshooting
+
+**"No users exist yet" even though you created one, or every login fails.** The web server can't read `data/`. This usually happens when `bin/user.php` was run as root or under your own account. The login page shows a **Setup problem** message with the exact command to fix it, typically:
+
+```sh
+sudo chown -R www-data:www-data /path/to/php-ssl-scanner/data
+```
+
+The same message is written to PHP's error log.
+
+**The progress bar doesn't move during a scan.** The web server is handling one request at a time. See the note about `PHP_CLI_SERVER_WORKERS` under Setup.
 
 ## Development
 

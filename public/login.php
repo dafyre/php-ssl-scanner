@@ -41,17 +41,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$noUsers = users()->list() === [];
+$problems = storage_problems();
+$noUsers = $problems === [] && users()->list() === [];
+$cliUser = process_user();
+$userCommand = ($cliUser !== null && $cliUser !== 'root' ? "sudo -u {$cliUser} " : '') . 'php bin/user.php add <username>';
 $title = 'Sign in';
 require APP_ROOT . '/templates/header.php';
 ?>
 <main class="login">
   <form method="post" class="card" autocomplete="on">
     <h1><?= h(config('app_name')) ?></h1>
-    <?php if ($noUsers): ?>
-      <p class="notice">No users exist yet. On the server, run<br><code>php bin/user.php add &lt;username&gt;</code></p>
+    <?php if ($problems !== []): ?>
+      <div class="error setup" role="alert">
+        <strong>Setup problem:</strong>
+        <?php foreach ($problems as $p): ?><p><?= h($p) ?></p><?php endforeach; ?>
+        <p>Signing in won’t work until this is fixed. On the server, run:</p>
+        <code><?= h(storage_fix_command()) ?></code>
+      </div>
+    <?php elseif ($noUsers): ?>
+      <p class="notice">No users exist yet. On the server, from the app folder, run<br><code><?= h($userCommand) ?></code></p>
     <?php endif; ?>
-    <?php if ($error): ?>
+    <?php if ($error && $problems === []): ?>
       <p class="error" role="alert"><?= h($error) ?></p>
     <?php endif; ?>
     <?= csrf_field() ?>
