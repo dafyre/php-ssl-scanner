@@ -78,7 +78,8 @@ function storage_problems(): array
     $problems = [];
     $dir = rtrim((string) config('data_dir'), '/');
     $as = process_user();
-    $who = $as !== null ? "the web server (running as “{$as}”)" : 'the web server';
+    $subject = PHP_SAPI === 'cli' ? 'this script' : 'the web server';
+    $who = $as !== null ? "{$subject} (running as “{$as}”)" : $subject;
     $rel = static fn (string $path): string => str_starts_with($path, APP_ROOT . '/') ? substr($path, strlen(APP_ROOT) + 1) : basename($path);
 
     if (!file_exists($dir)) {
@@ -96,8 +97,11 @@ function storage_problems(): array
         }
     }
 
-    foreach ($problems as $p) {
-        error_log('[ssl-scanner] ' . $p);
+    // Log for the web server's error log; on the command line the caller prints it instead.
+    if (PHP_SAPI !== 'cli') {
+        foreach ($problems as $p) {
+            error_log('[ssl-scanner] ' . $p);
+        }
     }
     return $problems;
 }
@@ -112,6 +116,24 @@ function storage_fix_command(): string
     }
     $dir = realpath((string) config('data_dir')) ?: (string) config('data_dir');
     return "sudo chown -R {$owner}:{$group} {$dir}";
+}
+
+/**
+ * Advice for a command-line script that can't use the data folder. Unlike the web case,
+ * the fix is usually to run the script as the folder's owner, not to change the owner:
+ * giving data/ to whoever ran the script would lock the web server out.
+ */
+function cli_storage_advice(): string
+{
+    $dir = realpath((string) config('data_dir')) ?: (string) config('data_dir');
+    $uid = @fileowner($dir);
+    $owner = ($uid !== false && function_exists('posix_getpwuid')) ? (posix_getpwuid($uid)['name'] ?? null) : null;
+    if ($owner !== null && $owner !== 'root') {
+        return "{$dir} belongs to “{$owner}”, so run this script as that user, e.g. sudo -u {$owner} php "
+            . ($_SERVER['argv'][0] ?? 'bin/run-saved.php') . ' ...  (in cron: sudo crontab -u ' . $owner . ' -e)';
+    }
+    return "Give {$dir} to the web server user, e.g. sudo chown -R www-data:www-data {$dir} "
+        . '(apache:apache on RHEL/CentOS/Fedora), then run this script as that user.';
 }
 
 /** True when the request came from the page's JavaScript rather than a plain form post. */

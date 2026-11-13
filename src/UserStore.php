@@ -127,28 +127,10 @@ final class UserStore
             fwrite($fh, json_encode($users, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
             fflush($fh);
             @chmod($this->file, 0600);
-            $this->matchDirectoryOwner();
+            FileOwner::matchParent($this->file);
         } finally {
             flock($fh, LOCK_UN);
             fclose($fh);
-        }
-    }
-
-    /**
-     * When run as root (e.g. `sudo php bin/user.php ...`), give the file to whoever owns
-     * the data directory, so the web server can still read it.
-     */
-    private function matchDirectoryOwner(): void
-    {
-        if (!function_exists('posix_geteuid') || posix_geteuid() !== 0) {
-            return;
-        }
-        $dir = dirname($this->file);
-        $uid = fileowner($dir);
-        $gid = filegroup($dir);
-        if ($uid !== false && $uid !== 0) {
-            @chown($this->file, $uid);
-            @chgrp($this->file, $gid);
         }
     }
 }

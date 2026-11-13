@@ -121,7 +121,51 @@ $auto = $store->saveRun('alice', $scan, '');
 check('blank name gets a default', str_starts_with($store->loadRun('alice', $auto)['name'], 'a.test, 10.0.0.2 — '));
 check('rename works', $store->renameRun('alice', $runId, 'Renamed') && $store->loadRun('alice', $runId)['name'] === 'Renamed');
 check('delete works', $store->deleteRun('alice', $runId) && $store->loadRun('alice', $runId) === null && count($store->listRuns('alice')) === 1);
+$job = $store->saveRun('alice', $scan, 'Nightly  Prod');
+check('find by name ignores case and spacing', array_column($store->findRunsByName('alice', ' nightly prod'), 'id') === [$job]);
+check('find by name is per user', $store->findRunsByName('bob', 'Nightly Prod') === []);
+check('find by name needs a full match', $store->findRunsByName('alice', 'Nightly') === []);
+$fresh = $scan;
+$fresh['at'] = $now + 3600;
+$fresh['results'] = [$cert];
+check('update replaces results', $store->updateRun('alice', $job, $fresh, 'schedule') && count($store->loadRun('alice', $job)['results']) === 1);
+$updated = $store->loadRun('alice', $job);
+check('update keeps name and id', $updated['name'] === 'Nightly Prod' && $updated['saved_id'] === $job);
+$summary = $store->findRunsByName('alice', 'nightly prod')[0];
+check('update refreshes list summary', $summary['checks'] === 1 && $summary['at'] === $now + 3600 && $summary['updated_via'] === 'schedule');
+check('update of missing run fails', !$store->updateRun('alice', str_repeat('0', 16), $fresh, 'schedule'));
+$lock = $store->lockRun('alice', $job);
+check('lock is exclusive', $lock !== null && $store->lockRun('alice', $job) === null);
+fclose($lock);
+check('lock is released', ($l2 = $store->lockRun('alice', $job)) !== null);
+fclose($l2);
 check('bad run id rejected', $store->loadRun('alice', '../../x') === null && !$store->deleteRun('alice', 'zz'));
+
+echo "Report\n";
+$mk = static fn (string $host, int $port, int $expiresInDays, string $fp) => [
+    'host' => $host, 'ip' => '10.0.0.1', 'port' => $port, 'sni' => $host, 'ok' => true, 'error' => null,
+    'cn' => $host, 'sans' => [$host], 'issuer' => 'Test CA', 'self_signed' => false,
+    'issued' => $now - 86400, 'expires' => $now + 86400 * $expiresInDays + 3600, 'days_left' => 0, 'serial' => '1', 'fingerprint' => $fp,
+];
+$base = ['at' => $now, 'elapsed' => 1.0, 'cancelled' => false, 'warnings' => [], 'targets' => '', 'ports' => ''];
+$report = new SslScanner\Report(30);
+$okScan = $base + ['results' => [$mk('a.test', 443, 200, 'f1')]];
+$soonScan = $base + ['results' => [$mk('a.test', 443, 200, 'f1'), $mk('b.test', 443, 10, 'f2')]];
+$badScan = $base + ['results' => [$mk('a.test', 443, 200, 'f1'), $mk('b.test', 443, 10, 'f2'), $mk('c.test', 443, -3, 'f3')]];
+check('status 0 when all valid', $report->status($okScan, $now) === 0);
+check('status 1 when expiring', $report->status($soonScan, $now) === 1);
+check('status 2 when expired', $report->status($badScan, $now) === 2);
+$text = $report->render('Prod', $badScan, null, false, $now);
+check('report lists problems, not valid certs', str_contains($text, 'EXPIRED (1)') && str_contains($text, 'c.test') && str_contains($text, 'b.test') && !preg_match('/^\s+in 200 days/m', $text));
+check('report counts whole days since expiry', str_contains($text, '2 days ago'));  // expired 2d 23h ago
+check('--all lists valid certs', str_contains($report->render('Prod', $badScan, null, true, $now), 'VALID (1)'));
+$prev = $base + ['at' => $now - 86400, 'results' => [$mk('a.test', 443, 200, 'old'), $mk('gone.test', 443, 50, 'f9')]];
+$changes = $report->render('Prod', $soonScan, $prev, false, $now);
+check('changes: renewed', str_contains($changes, 'Replaced or renewed (1)') && str_contains($changes, 'a.test:443'));
+check('changes: new', str_contains($changes, 'New certificates (1)') && str_contains($changes, 'b.test:443'));
+check('changes: gone', str_contains($changes, 'No longer answering (1)') && str_contains($changes, 'gone.test:443'));
+check('changes: none', str_contains($report->render('Prod', $okScan, $okScan, false, $now), 'No changes.'));
+check('report is ASCII', !preg_match('/[^\x00-\x7F]/', $changes . $text));
 
 echo "Import validation\n";
 $exported = json_decode(json_encode(ScanStore::exportRun($scan)), true);

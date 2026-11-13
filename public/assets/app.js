@@ -8,6 +8,39 @@
     });
   });
 
+  // Saved runs: show/hide the full-width schedule row under a run.
+  document.querySelectorAll('.toggle-schedule').forEach(function (button) {
+    button.addEventListener('click', function () {
+      var row = document.getElementById(button.getAttribute('aria-controls'));
+      var open = row.hidden;
+      row.hidden = !open;
+      button.setAttribute('aria-expanded', String(open));
+      button.closest('tr').classList.toggle('has-schedule-open', open);
+    });
+  });
+
+  // Copy buttons: data-copy="<id of element whose text to copy>".
+  document.querySelectorAll('[data-copy]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      var text = document.getElementById(button.dataset.copy).textContent;
+      var done = function () {
+        button.textContent = 'Copied';
+        setTimeout(function () { button.textContent = 'Copy'; }, 1500);
+      };
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(done);
+      } else {
+        // Fallback for plain-HTTP setups: select the text so Ctrl+C works.
+        var range = document.createRange();
+        range.selectNodeContents(document.getElementById(button.dataset.copy));
+        var sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        button.textContent = 'Press Ctrl+C';
+      }
+    });
+  });
+
   var form = document.getElementById('scan-form');
   if (form && window.fetch && window.FormData) {
     initScanProgress(form);

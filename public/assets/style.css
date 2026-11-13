@@ -272,3 +272,16 @@ button.danger { color: var(--expired); }
 #results td.host, #results td.cn, #results td.sans li, #results td.issuer { word-break: normal; overflow-wrap: anywhere; }
 #results td.issuer .tag { white-space: nowrap; }
 #results td:nth-child(2) { overflow-wrap: anywhere; }
+
+/* Saved runs: rename + schedule panels */
+.run-tools { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 4px; }
+.run-tools details[open] { flex-basis: 100%; }
+.run-tools .rename { margin-top: 0; }
+.run-tools .link { font-size: 0.85rem; color: var(--muted); font-weight: 400; }
+.run-tools .link[aria-expanded="true"] { color: var(--text); }
+table.runs tr.schedule-row td { background: var(--bg); padding: 14px 16px; }
+table.runs tr.has-schedule-open td { border-bottom-color: transparent; }
+.schedule-body { max-width: 900px; font-size: 0.88rem; }
+.schedule-body p { margin: 0 0 8px; }
+.copy-row { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; }
+code.cron { flex: 1; display: block; padding: 8px 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }

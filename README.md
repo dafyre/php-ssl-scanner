@@ -12,7 +12,7 @@ Enter hostnames, IP addresses, or whole subnets in CIDR notation, plus a list of
 
 While a scan runs, a progress bar shows how many address/port checks are done, certificates found so far, elapsed time, and an estimate of the time left. A **Cancel** button stops the scan and keeps the partial results.
 
-Results can be filtered, sorted by any column, and downloaded as CSV. Runs can be saved by name and loaded later, or downloaded and imported as JSON. Your most recent scan stays on the page when you come back. The app requires a username and password.
+Results can be filtered, sorted by any column, and downloaded as CSV. Runs can be saved by name and loaded later, downloaded and imported as JSON, or re-run on a schedule from cron with an emailed report. Your most recent scan stays on the page when you come back. The app requires a username and password.
 
 ## Requirements
 
@@ -129,6 +129,47 @@ The filter bar above the results narrows the table instantly:
 
 Saved runs are private to each user and stored in `data/scans/`.
 
+## Scheduled scans (cron)
+
+`bin/run-saved.php` re-runs a saved run by name from the command line. Each run:
+
+1. Re-scans that run's targets and ports. Hostnames are looked up again, so DNS changes are picked up.
+2. Saves the new results back into the saved run, so the web page shows them. The Saved runs list marks it **by schedule**.
+3. Prints a plain-text report: expired and expiring certificates, plus what changed since the previous run (certificates renewed or replaced, new ones, and ones that stopped answering).
+
+Cron emails anything a job prints to the crontab's `MAILTO` address, so the report becomes your email. With `--quiet`, the script prints nothing unless a certificate has expired or expires within `warn_days`, so you only get email when something needs attention.
+
+**Set it up** in the web server user's crontab, so the files it writes stay readable by the web app:
+
+```sh
+sudo crontab -u www-data -e
+```
+
+```cron
+MAILTO=ops@example.com
+# Every day at 07:00
+0 7 * * *  php /var/www/php-ssl-scanner/bin/run-saved.php --quiet "Production"
+```
+
+The **Schedule** button on the Saved runs page shows this line for each run, with the correct path, ready to copy. If you do run it from root's crontab instead, new files are given to the owner of `data/` so the web app can still read them.
+
+**Options**
+
+| Option | What it does |
+| --- | --- |
+| `--quiet` | Print nothing unless something has expired or is expiring |
+| `--all` | Also list valid certificates in the report |
+| `--warn-days=N` | Use N days as the "expiring" window instead of `warn_days` |
+| `--csv=FILE` | Also write the results as CSV; `{date}` in the name becomes the scan date, e.g. `--csv=/var/reports/ssl-{date}.csv` |
+| `--no-save` | Scan and report without updating the saved run |
+| `--user=NAME` | Owner of the run, if several users have a run with the same name |
+| `--id=ID` | Pick the run by id instead of name. Ids don't change when a run is renamed |
+| `--list` | List saved runs with their ids and owners |
+
+Names are matched ignoring case and extra spaces. If a run is renamed in the web app, update the crontab, or use `--id` so it doesn't matter.
+
+**Exit status** follows the Nagios convention, so the script can also feed a monitoring system: `0` nothing expiring, `1` something expires within the warning window, `2` something has expired, `3` error (run not found, already running, invalid targets, and so on). If a scan of the same run is still going when the next one starts, the second exits with status 3 instead of overlapping.
+
 ## How progress works
 
 The scan page sends the scan request in the background and polls `progress.php` about once a second. The running scan writes its progress to a small file in `data/scans/`. Each user's latest results are saved there too, so they're still available after a page reload, and the CSV export uses them.
@@ -154,6 +195,8 @@ sudo chown -R www-data:www-data /path/to/php-ssl-scanner/data
 
 The same message is written to PHP's error log.
 
+**A scheduled run fails with "can't read and write the data folder".** The crontab belongs to a different user than the one that owns `data/`. The error says which user owns it. Move the line to that user's crontab (`sudo crontab -u www-data -e`).
+
 **The progress bar doesn't move during a scan.** The web server is handling one request at a time. See the note about `PHP_CLI_SERVER_WORKERS` under Setup.
 
 ## Development
@@ -169,10 +212,11 @@ Project layout:
 ```
 public/      web root: scan page, saved runs, CSV export, progress endpoint, CSS, JS
 src/         TargetParser (input parsing, CIDR expansion), Scanner (parallel TLS),
-             ScanStore (progress, latest results, saved runs, import validation),
-             UserStore, LoginThrottle, bootstrap helpers
+             ScanJob (validate + run a scan), ScanStore (progress, latest results,
+             saved runs, import validation), Report (cron report), CsvExport,
+             UserStore, LoginThrottle, FileOwner, bootstrap helpers
 templates/   shared page header and footer
-bin/         command-line user management
+bin/         user.php (manage users), run-saved.php (re-run a saved run, e.g. from cron)
 config/      config.example.php (copy to config.php)
 data/        runtime data: users, login throttle, scan progress, results, saved runs (git-ignored)
 tests/       dependency-free tests

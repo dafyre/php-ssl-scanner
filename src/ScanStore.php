@@ -39,6 +39,7 @@ final class ScanStore
     {
         $this->ensureDir();
         touch($this->progressPath($user, $id) . '.cancel');
+        FileOwner::matchParent($this->progressPath($user, $id) . '.cancel');
     }
 
     public function cancelRequested(string $user, string $id): bool
@@ -105,6 +106,67 @@ final class ScanStore
         return $scan === null ? null : $scan + ['saved_id' => $id];
     }
 
+    /**
+     * Saved runs with this name (case-insensitive, spacing ignored), newest first.
+     *
+     * @return list<array>
+     */
+    public function findRunsByName(string $user, string $name): array
+    {
+        $want = self::nameKey($name);
+        return array_values(array_filter(
+            $this->listRuns($user),
+            static fn (array $run) => self::nameKey($run['name']) === $want,
+        ));
+    }
+
+    /**
+     * Replaces a saved run's results with a fresh scan, keeping its name and id.
+     *
+     * @param string $via what updated it, e.g. "schedule"; shown on the Saved runs page
+     */
+    public function updateRun(string $user, string $id, array $scan, string $via): bool
+    {
+        $existing = $this->loadRun($user, $id);
+        if ($existing === null) {
+            return false;
+        }
+        $scan = self::normalizeRun($scan);
+        $scan['name'] = $existing['name'];
+        $scan['saved_at'] = $existing['saved_at'] ?? time();
+        $scan['updated_at'] = time();
+        $scan['updated_via'] = $via;
+
+        $this->writeJson($this->runPath($user, $id), $scan);
+        $this->mutateIndex($user, function (array $index) use ($id, $scan) {
+            $index[$id] = self::summarize($id, $scan);
+            return $index;
+        });
+        return true;
+    }
+
+    /**
+     * Takes an exclusive, non-blocking lock for a saved run so two scheduled runs of the
+     * same job can't overlap. Returns the lock handle (keep it open), or null if it's held.
+     *
+     * @return resource|null
+     */
+    public function lockRun(string $user, string $id)
+    {
+        $this->ensureDir();
+        $path = $this->runPath($user, $id) . '.lock';
+        $fh = @fopen($path, 'c');
+        if ($fh === false) {
+            throw new \RuntimeException("Could not create lock file {$path}.");
+        }
+        FileOwner::matchParent($path);
+        if (!flock($fh, LOCK_EX | LOCK_NB)) {
+            fclose($fh);
+            return null;
+        }
+        return $fh;
+    }
+
     public function renameRun(string $user, string $id, string $name): bool
     {
         $scan = $this->loadRun($user, $id);
@@ -130,6 +192,7 @@ final class ScanStore
             return false;
         }
         @unlink($this->runPath($user, $id));
+        @unlink($this->runPath($user, $id) . '.lock');
         $this->mutateIndex($user, function (array $index) use ($id) {
             unset($index[$id]);
             return $index;
@@ -239,6 +302,12 @@ final class ScanStore
         return preg_match('/^.{0,' . $max . '}/us', $s, $m) ? $m[0] : substr($s, 0, $max);
     }
 
+    private static function nameKey(string $name): string
+    {
+        $name = self::cleanName($name);
+        return function_exists('mb_strtolower') ? mb_strtolower($name) : strtolower($name);
+    }
+
     private static function cleanName(string $name): string
     {
         $name = trim(preg_replace('/\s+/u', ' ', $name) ?? '');
@@ -264,6 +333,8 @@ final class ScanStore
             'found' => count($expires),
             'expires' => $expires, // kept so the list can show expired/expiring counts as of today
             'cancelled' => $scan['cancelled'],
+            'updated_at' => $scan['updated_at'] ?? null,
+            'updated_via' => $scan['updated_via'] ?? null,
         ];
     }
 
@@ -296,6 +367,7 @@ final class ScanStore
             fwrite($fh, json_encode($index, JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE));
             fflush($fh);
             @chmod($this->indexPath($user), 0600);
+            FileOwner::matchParent($this->indexPath($user));
         } finally {
             flock($fh, LOCK_UN);
             fclose($fh);
@@ -336,6 +408,7 @@ final class ScanStore
     {
         if (!is_dir($this->dir)) {
             @mkdir($this->dir, 0700, true);
+            FileOwner::matchParent($this->dir);
         }
     }
 
@@ -346,6 +419,7 @@ final class ScanStore
         $tmp = $path . '.' . bin2hex(random_bytes(4)) . '.tmp';
         file_put_contents($tmp, json_encode($data, JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE));
         @chmod($tmp, 0600);
+        FileOwner::matchParent($tmp);
         rename($tmp, $path);
     }
 

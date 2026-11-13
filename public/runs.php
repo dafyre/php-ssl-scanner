@@ -117,8 +117,32 @@ function read_upload(): array
 
 // ---- List page ----------------------------------------------------------------------
 
+function run_name_key(string $name): string
+{
+    $name = trim((string) preg_replace('/\s+/u', ' ', $name));
+    return function_exists('mb_strtolower') ? mb_strtolower($name) : strtolower($name);
+}
+
+/** The user whose crontab should run scheduled scans: the web server's user, never root. */
+function web_user_for_cron(): string
+{
+    $u = process_user();
+    return $u === null || $u === 'root' ? 'www-data' : $u;
+}
+
+/** A ready-to-paste crontab line that re-runs this saved run with bin/run-saved.php. */
+function cron_line(array $run, array $nameCounts): string
+{
+    $script = APP_ROOT . '/bin/run-saved.php';
+    $which = ($nameCounts[run_name_key($run['name'])] ?? 0) > 1
+        ? '--id=' . $run['id']
+        : escapeshellarg($run['name']);
+    return '0 7 * * *  php ' . escapeshellarg($script) . ' --quiet ' . $which;
+}
+
 $flash = take_flash();
 $runs = $store->listRuns($user);
+$nameCounts = array_count_values(array_map(static fn ($r) => run_name_key($r['name']), $runs));
 $currentId = $store->loadResult($user)['saved_id'] ?? null;
 $warnDays = (int) config('warn_days');
 
@@ -169,6 +193,7 @@ require APP_ROOT . '/templates/header.php';
               <strong><?= h($run['name']) ?></strong>
               <?php if ($run['id'] === $currentId): ?> <span class="tag">on scan page</span><?php endif; ?>
               <?php if ($run['cancelled']): ?> <span class="tag">partial</span><?php endif; ?>
+              <div class="run-tools">
               <details class="rename">
                 <summary>Rename</summary>
                 <form method="post">
@@ -179,8 +204,13 @@ require APP_ROOT . '/templates/header.php';
                   <button type="submit" class="small">Save</button>
                 </form>
               </details>
+              <button type="button" class="link toggle-schedule" aria-expanded="false" aria-controls="schedule-<?= h($run['id']) ?>">Schedule</button>
+              </div>
             </td>
-            <td><time title="Saved <?= h(gmdate('Y-m-d H:i', (int) $run['saved_at'])) ?> UTC"><?= h(gmdate('Y-m-d H:i', (int) $run['at'])) ?></time></td>
+            <td>
+              <time title="Saved <?= h(gmdate('Y-m-d H:i', (int) $run['saved_at'])) ?> UTC"><?= h(gmdate('Y-m-d H:i', (int) $run['at'])) ?></time>
+              <?php if (($run['updated_via'] ?? null) === 'schedule'): ?><br><span class="tag" title="Last updated by bin/run-saved.php">by schedule</span><?php endif; ?>
+            </td>
             <td class="targets-cell" title="<?= h($run['targets']) ?>"><?= h(preg_replace('/\s+/', ' ', $run['targets'])) ?></td>
             <td class="nowrap"><?= h($run['ports']) ?></td>
             <td class="num"><?= (int) $run['checks'] ?></td>
@@ -201,6 +231,21 @@ require APP_ROOT . '/templates/header.php';
                 <input type="hidden" name="id" value="<?= h($run['id']) ?>">
                 <button type="submit" class="link danger">Delete</button>
               </form>
+            </td>
+          </tr>
+          <tr class="schedule-row" id="schedule-<?= h($run['id']) ?>" hidden>
+            <td colspan="9">
+                <?php $cron = cron_line($run, $nameCounts); ?>
+                <div class="schedule-body">
+                  <p>To re-scan this run automatically every day at 07:00, add this line to the web server user’s crontab
+                    (<code>sudo crontab -u <?= h(web_user_for_cron()) ?> -e</code>):</p>
+                  <div class="copy-row">
+                    <code class="cron" id="cron-<?= h($run['id']) ?>"><?= h($cron) ?></code>
+                    <button type="button" class="secondary small" data-copy="cron-<?= h($run['id']) ?>">Copy</button>
+                  </div>
+                  <p class="muted">Each run updates this saved run and, with <code>--quiet</code>, prints a report only when a certificate has expired or expires within <?= (int) config('warn_days') ?> days. Cron emails that report to the crontab’s <code>MAILTO</code> address. Drop <code>--quiet</code> to get a report every time.
+                    <?php if (($nameCounts[run_name_key($run['name'])] ?? 0) > 1): ?>Another run has the same name, so this line uses the run’s id.<?php endif; ?></p>
+                </div>
             </td>
           </tr>
         <?php endforeach; ?>

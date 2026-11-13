@@ -2,9 +2,10 @@
 
 declare(strict_types=1);
 
+use SslScanner\ScanInputError;
+use SslScanner\ScanJob;
 use SslScanner\Scanner;
 use SslScanner\ScanStore;
-use SslScanner\TargetParser;
 
 require dirname(__DIR__) . '/src/bootstrap.php';
 
@@ -89,25 +90,12 @@ function handle_scan(string $user): void
     $store->cleanup();
     $store->writeProgress($user, $scanId, ['status' => 'preparing']);
 
+    $job = ScanJob::fromConfig();
     try {
-        $parser = new TargetParser((int) config('max_hosts'), (int) config('max_ports'));
-        $ports = $parser->parsePorts($portsInput);
-        $parsed = $parser->parseTargets($targetsInput);
-    } catch (InvalidArgumentException $e) {
+        $prepared = $job->prepare($targetsInput, $portsInput);
+    } catch (ScanInputError $e) {
         $store->clearProgress($user, $scanId);
-        $fail([$e->getMessage()]);
-        return;
-    }
-
-    $checks = count($parsed['targets']) * count($ports);
-    if ($parsed['targets'] === []) {
-        $store->clearProgress($user, $scanId);
-        $fail(['No valid targets to scan.'], $parsed['errors']);
-        return;
-    }
-    if ($checks > (int) config('max_checks')) {
-        $store->clearProgress($user, $scanId);
-        $fail(["That would be {$checks} host/port checks; the limit is " . config('max_checks') . '. Narrow the range or the port list.'], $parsed['errors']);
+        $fail([$e->getMessage()], $e->warnings);
         return;
     }
 
@@ -119,10 +107,10 @@ function handle_scan(string $user): void
 
     $started = microtime(true);
     $lastCancelCheck = 0.0;
-    $scanner = new Scanner((float) config('timeout'), (int) config('concurrency'));
-    $results = $scanner->scan(
-        $parsed['targets'],
-        $ports,
+    $scan = $job->run(
+        $prepared,
+        $targetsInput,
+        $portsInput,
         static function (int $done, int $total, int $found) use ($store, $user, $scanId, $started, &$lastCancelCheck): bool {
             $store->writeProgress($user, $scanId, [
                 'status' => 'scanning',
@@ -139,27 +127,7 @@ function handle_scan(string $user): void
         },
     );
 
-    usort($results, static function (array $a, array $b): int {
-        if ($a['ok'] !== $b['ok']) {
-            return $a['ok'] ? -1 : 1;
-        }
-        if ($a['ok'] && $a['expires'] !== $b['expires']) {
-            return $a['expires'] <=> $b['expires'];
-        }
-        return [$a['host'], inet_pton((string) $a['ip']) ?: '', $a['port']]
-            <=> [$b['host'], inet_pton((string) $b['ip']) ?: '', $b['port']];
-    });
-
-    $store->saveResult($user, [
-        'at' => time(),
-        'targets' => $targetsInput,
-        'ports' => $portsInput,
-        'warnings' => $parsed['errors'],
-        'elapsed' => microtime(true) - $started,
-        'total' => $checks,
-        'cancelled' => $scanner->wasCancelled(),
-        'results' => $results,
-    ]);
+    $store->saveResult($user, $scan);
     $store->clearProgress($user, $scanId);
 }
 
